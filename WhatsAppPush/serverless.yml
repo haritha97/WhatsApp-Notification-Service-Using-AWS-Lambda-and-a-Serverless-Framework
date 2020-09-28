@@ -1,0 +1,114 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: whatsapppush
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+custom:
+  stage: ${opt:stage, self.provider.stage}
+  templatesTableName: Templates
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: us-east-1 # Default aws region US East (N. Virginia)
+  versionFunctions: false # Disable function versioning, default true
+  # Lambda Function IAM role for resources which is being used by this service
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource:
+        - "Fn::GetAtt": [TemplatesTable, Arn]
+
+  # Define environment global to this service
+  environment:
+    DDB_TEMPLATES_TABLE_NAME: ${self:custom.templatesTableName}
+
+functions:
+  CreateTemplates:
+    handler: handlers/template.create
+    description: Function to handle business logic to create templates
+    # HTTP events to trigger CreateTemplates lambda function
+    events:
+      - http:
+          path: templates
+          method: post
+          cors: true
+  ListTemplates:
+    handler: handlers/template.list
+    description: Function to handle business logic to get all templates
+    # HTTP events to trigger ListTemplates lambda function
+    events:
+      - http:
+          path: templates/{user_id}
+          method: get
+          cors: true
+  UpdateTemplates:
+    handler: handlers/template.update
+    description: Function to handle business logic to update templates
+    # HTTP events to trigger UpdateTemplates lambda function
+    events:
+      - http:
+          path: templates/{user_id}/{template_id}
+          method: put
+          cors: true
+  DeleteTemplates:
+    handler: handlers/template.delete
+    description: Function to handle business logic to delete templates
+    # HTTP events to trigger DeleteTemplates lambda function
+    events:
+      - http:
+          path: templates/{user_id}/{template_id}
+          method: delete
+          cors: true
+  DetailsTemplates:
+    handler: handlers/template.details
+    description: Function to handle business logic to get template details
+    # HTTP events to trigger DetailsTemplates lambda function
+    events:
+      - http:
+          path: templates/{user_id}/{template_id}
+          method: get
+          cors: true
+
+# CloudFormation resource templates for infra which will be used by this service
+resources:
+  Resources:
+    TemplatesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.templatesTableName}
+        AttributeDefinitions:
+          - AttributeName: user_id
+            AttributeType: S
+          - AttributeName: template_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: user_id
+            KeyType: HASH
+          - AttributeName: template_id
+            KeyType: RANGE
+        # Set the capacity to auto-scale
+        BillingMode: PAY_PER_REQUEST

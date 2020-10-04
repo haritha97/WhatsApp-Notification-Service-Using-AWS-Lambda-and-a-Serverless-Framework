@@ -1,26 +1,9 @@
-# Welcome to Serverless!
-#
-# This file is the main config file for your service.
-# It's very minimal at this point and uses default values.
-# You can always add more config options for more control.
-# We've included some commented out config examples here.
-# Just uncomment any of them to get that config option.
-#
-# For full config options, check the docs:
-#    docs.serverless.com
-#
-# Happy Coding!
-
 service: whatsapppush
-# app and org for use with dashboard.serverless.com
-#app: your-app-name
-#org: your-org-name
 
-# You can pin your service to only deploy with a specific Serverless version
-# Check out our docs for more details
 custom:
   stage: ${opt:stage, self.provider.stage}
   templatesTableName: Templates
+  recipientS3BucketName: whatsapppush-recipient-file-storages
 
 provider:
   name: aws
@@ -41,10 +24,16 @@ provider:
         - dynamodb:DeleteItem
       Resource:
         - "Fn::GetAtt": [TemplatesTable, Arn]
+    - Effect: "Allow"
+      Action:
+        - "s3:*"
+      Resource:
+        - "arn:aws:s3:::*"
 
   # Define environment global to this service
   environment:
     DDB_TEMPLATES_TABLE_NAME: ${self:custom.templatesTableName}
+    RECIPIENT_S3_BUCKET_NAME: ${self:custom.recipientS3BucketName}
 
 functions:
   CreateTemplates:
@@ -92,6 +81,15 @@ functions:
           path: templates/{user_id}/{template_id}
           method: get
           cors: true
+  GetSignedUrl:
+    handler: handlers/upload.getSignedUrl
+    description: Function to get s3 bucket signed url to upload the recipients file
+    # HTTP events to trigger GetSignedUrl lambda function
+    events:
+      - http:
+          path: upload-url/{user_id}
+          method: post
+          cors: true
 
 # CloudFormation resource templates for infra which will be used by this service
 resources:
@@ -112,3 +110,7 @@ resources:
             KeyType: RANGE
         # Set the capacity to auto-scale
         BillingMode: PAY_PER_REQUEST
+    RecipientFilesS3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.recipientS3BucketName}

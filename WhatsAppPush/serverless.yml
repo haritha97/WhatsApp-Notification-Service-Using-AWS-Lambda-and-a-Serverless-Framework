@@ -3,7 +3,7 @@ service: whatsapppush
 custom:
   stage: ${opt:stage, self.provider.stage}
   templatesTableName: Templates
-  recipientS3BucketName: whatsapppush-recipient-file-storages
+  recipientS3BucketName: whatsapppush-recipient-file-storages-haritha
   messageQueueName: whatsapppush-message-queue-name
   notificationTaskTableName: NotificationTask
   statusLogsTableName: StatusLogs

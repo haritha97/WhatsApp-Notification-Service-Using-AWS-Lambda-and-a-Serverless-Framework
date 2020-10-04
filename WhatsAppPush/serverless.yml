@@ -6,6 +6,7 @@ custom:
   recipientS3BucketName: whatsapppush-recipient-file-storages
   messageQueueName: whatsapppush-message-queue-name
   notificationTaskTableName: NotificationTask
+  statusLogsTableName: StatusLogs
 
 provider:
   name: aws
@@ -27,6 +28,7 @@ provider:
       Resource:
         - "Fn::GetAtt": [TemplatesTable, Arn]
         - "Fn::GetAtt": [NotificationTaskTable, Arn]
+        - "Fn::GetAtt": [StatusLogsTable, Arn]
     - Effect: "Allow"
       Action:
         - "s3:*"
@@ -44,6 +46,9 @@ provider:
     RECIPIENT_S3_BUCKET_NAME: ${self:custom.recipientS3BucketName}
     SMS_MESSAGE_QUEUE_URL: ${self:resources.Outputs.WhatsAppMessageQueueURL.Value}
     DDB_NOTIFICATION_TASK_TABLE_NAME: ${self:custom.notificationTaskTableName}
+    DDB_STATUS_LOGS_TABLE_NAME: ${self:custom.statusLogsTableName}
+    TWILIO_ACCOUNT_SID: EXAMPLEAC45c59c45c50f079f3c9be82
+    TWILIO_AUTH_TOKEN: EXAMPLE3f4055cd0dc612941e8128129
 
 functions:
   CreateTemplates:
@@ -118,6 +123,22 @@ functions:
           path: notification/{user_id}
           method: get
           cors: true
+  NotificationProcessor:
+    handler: handlers/notification.process
+    description: Function to handle business logic to process notification task (sending WhatsApp notification)
+    events:
+      - sqs:
+          arn: ${self:resources.Outputs.WhatsAppMessageQueueARN.Value}
+          batchSize: 1
+  MessageStatusCallBack:
+    handler: handlers/notification.statusCallback
+    description: Function to handle business logic to handle real time feedback of WhatsApp message
+    # HTTP events to trigger MessageStatusCallBack lambda function
+    events:
+      - http:
+          path: notification/status
+          method: post
+          cors: true
 
 # CloudFormation resource templates for infra which will be used by this service
 resources:
@@ -162,9 +183,31 @@ resources:
             KeyType: RANGE
         # Set the capacity to auto-scale
         BillingMode: PAY_PER_REQUEST
+    StatusLogsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.statusLogsTableName}
+        AttributeDefinitions:
+          - AttributeName: notification_id
+            AttributeType: S
+          - AttributeName: log_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: notification_id
+            KeyType: HASH
+          - AttributeName: log_id
+            KeyType: RANGE
+        # Set the capacity to auto-scale
+        BillingMode: PAY_PER_REQUEST
 
   Outputs:
     WhatsAppMessageQueueURL:
       Description: WhatsAppMessageQueue URL
       Value:
         Ref: WhatsAppMessageQueue
+    WhatsAppMessageQueueARN:
+      Description: The ARN of the WhatsAppMessageQueue
+      Value:
+        Fn::GetAtt:
+          - WhatsAppMessageQueue
+          - Arn

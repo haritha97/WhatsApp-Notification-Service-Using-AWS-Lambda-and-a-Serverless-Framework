@@ -1,11 +1,17 @@
+// Import require packages
 const uuid = require("uuid"); // Used to generate unique UUID
 const Joi = require("@hapi/joi"); // Used to validate Schema
 const HttpStatus = require("http-status"); // Used to stream line http status code
 const DynamoDBClient = require("../libs/dynamoDb-client.js"); // Reusable dynamodb client api
 const { handleSuccess, handleError } = require("../libs/response-handler.js");
-const { enqueueMessage } = require("../libs/sqs-client.js");
+const {
+  enqueueMessage,
+  deleteProcessedMessageFromQueue,
+} = require("../libs/sqs-client.js");
 const csvToJson = require("csvtojson");
+const { sendWhatsAppMessageViaTwilio } = require("../libs/twilio-client.js");
 const AWS = require("aws-sdk");
+const querystring = require("querystring");
 const xlsx = require("node-xlsx");
 const S3 = new AWS.S3();
 
@@ -92,7 +98,7 @@ exports.create = async (event) => {
             await enqueueMessage({
               notification_id,
               user_id,
-              sent_from: "+1999999999", // Twilio Sandbox number
+              sent_from: "+1999999999", // Example Twilio Sandbox number
               sent_to: phone_number,
               message: messageText,
             })
@@ -158,6 +164,123 @@ exports.list = async (event) => {
     );
   }
 };
+
+exports.process = async (event) => {
+  try {
+    for (let index = 0, len = event.Records.length; index < len; index++) {
+      const { body, receiptHandle } = event.Records[index];
+      const messageBody = JSON.parse(body);
+      await sendWhatsAppMessage(messageBody);
+      await deleteProcessedMessageFromQueue(receiptHandle);
+    }
+  } catch (error) {
+    return handleError(
+      HttpStatus.INTERNAL_SERVER_ERROR,
+      `[NotificationProcessor:Process:Error]: ${error.stack}`
+    );
+  }
+};
+
+exports.statusCallback = async (event) => {
+  // Make sure body exist
+  if (!event.body) throw new Error("Missing Parameters");
+
+  try {
+    // Parse request body
+    const requestBody = event.body;
+    const parsedQuery = querystring.parse(requestBody);
+    const sid = parsedQuery.MessageSid;
+    const status = parsedQuery.MessageStatus;
+
+    if (sid) {
+      // Find and Update the status
+      const params = {
+        TableName: process.env.DDB_STATUS_LOGS_TABLE_NAME,
+        FilterExpression: "#sid = :sid",
+        ExpressionAttributeNames: {
+          "#sid": "message_sid",
+        },
+        ExpressionAttributeValues: {
+          ":sid": sid,
+        },
+      };
+
+      const result = await DynamoDBClient.scan(params);
+
+      if (result && result.items[0]) {
+        const { notification_id, log_id } = result.items[0];
+
+        // Update the status
+        const updateParams = {
+          TableName: process.env.DDB_STATUS_LOGS_TABLE_NAME,
+          Key: {
+            notification_id,
+            log_id,
+          },
+          UpdateExpression: "set delivery_status = :status",
+          ExpressionAttributeValues: {
+            ":status": status,
+          },
+          ReturnValues: "ALL_NEW",
+        };
+
+        await DynamoDBClient.update(updateParams);
+      }
+
+      return handleSuccess(requestBody);
+    }
+    return handleError(
+      HttpStatus.INTERNAL_SERVER_ERROR,
+      "[Template:StatusCallback:Error]: Record Not Found"
+    );
+  } catch (error) {
+    return handleError(
+      HttpStatus.INTERNAL_SERVER_ERROR,
+      `[Template:StatusCallback:Error]: ${error.stack}`
+    );
+  }
+};
+
+async function sendWhatsAppMessage(messageConfig) {
+  const {
+    notification_id,
+    user_id,
+    sent_from,
+    sent_to,
+    message,
+  } = messageConfig;
+
+  try {
+    // Send Message to WhatsApp
+    const result = await sendWhatsAppMessageViaTwilio({
+      from: sent_from,
+      body: message,
+      to: sent_to,
+    });
+
+    // Save the Results in StatusLog Table
+    const params = {
+      TableName: process.env.DDB_STATUS_LOGS_TABLE_NAME,
+      Item: {
+        notification_id,
+        log_id: uuid.v1(),
+        user_id,
+        sent_from,
+        sent_to,
+        message,
+        sent_at: Date.now(),
+        delivery_status: result.status,
+        message_sid: result.sid,
+        twilio_result_payload: JSON.stringify(result),
+      },
+    };
+
+    // Add record in dynamoDB
+    await DynamoDBClient.put(params);
+  } catch (error) {
+    throw new Error("Error Occurred while processing WhatsApp message");
+  }
+}
 
 async function getMessageTextBy(template_id, user_id) {
   const params = {
